@@ -82,17 +82,33 @@ fun App() {
                 }, Modifier.fillMaxWidth()) { Text("افزودن کار") }
             }
         }
-        tasks.groupBy { it.date }.forEach { (date, list) ->
-            item(key = date) {
-                Text(Jalali.label(date, today), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+               val sections = listOf(
+            "امروز" to tasks.filter { it.date == today },
+            "آینده" to tasks.filter { it.date > today },
+            "گذشته" to tasks.filter { it.date < today }.sortedByDescending { it.date }
+        )
+        sections.forEach { (name, all) ->
+            item(key = "sec-" + name) {
+                Text(name + " (" + Jalali.fa(all.size.toString()) + ")",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 16.dp))
             }
-            items(list, key = { it.id }) { t ->
-                TaskRow(t,
-                    { commit(tasks.map { x -> if (x.id == t.id) x.copy(done = !x.done) else x }) },
-                    { commit(tasks.filter { x -> x.id != t.id }) })
+            if (all.isEmpty()) item(key = "empty-" + name) {
+                Text("کاری نیست", style = MaterialTheme.typography.bodySmall)
             }
-        }
-    }
+            all.groupBy { it.date }.forEach { (date, list) ->
+                item(key = "d-" + name + date) {
+                    Text(Jalali.label(date, today), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+                }
+                items(list, key = { it.id }) { t ->
+                    TaskRow(t,
+                        { commit(tasks.map { x -> if (x.id == t.id) x.copy(done = !x.done) else x }) },
+                        { commit(tasks.filter { x -> x.id != t.id }) })
+                }
+            }
+        }    }
 }
 
 @Composable
