@@ -21,7 +21,7 @@ class TaskWidget : AppWidgetProvider() {
 
         private fun draw(c: Context, m: AppWidgetManager, id: Int) {
             val today = Jalali.todayIso()
-            val items = Store.load(c).filter { it.date == today && !it.done }.take(5)
+            val items = Store.load(c).filter { it.date == today && !it.done }.take(8)
             val text = if (items.isEmpty()) "امروز کاری باقی نمانده"
             else items.joinToString(System.lineSeparator()) { Jalali.fa(it.time) + "   " + it.title }
             val v = RemoteViews(c.packageName, R.layout.widget_tasks)
