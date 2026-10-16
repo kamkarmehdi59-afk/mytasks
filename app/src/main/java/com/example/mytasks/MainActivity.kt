@@ -4,18 +4,21 @@ import android.app.TimePickerDialog
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -39,27 +42,24 @@ fun App() {
     val ctx = LocalContext.current
     var tasks by remember { mutableStateOf(Store.load(ctx)) }
     val today = Jalali.todayIso()
-    val j = remember { Jalali.fromIso(today) }
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
-    var y by remember { mutableStateOf(j[0].toString()) }
-    var mo by remember { mutableStateOf(j[1].toString()) }
-    var d by remember { mutableStateOf(j[2].toString()) }
+    var sel by remember { mutableStateOf(today) }
+    var showCal by remember { mutableStateOf(false) }
     var time by remember { mutableStateOf("09:00") }
     var err by remember { mutableStateOf("") }
     fun commit(l: List<Task>) { Store.save(ctx, l); tasks = Store.load(ctx) }
-    val num = KeyboardOptions(keyboardType = KeyboardType.Number)
+
+    if (showCal) CalendarDialog(sel, today, { sel = it; showCal = false }, { showCal = false })
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("کارهای من", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(Jalali.text(today))
+                Text(Jalali.full(today))
                 OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("عنوان") }, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(d, { d = it }, Modifier.weight(1f), label = { Text("روز") }, keyboardOptions = num, singleLine = true)
-                    OutlinedTextField(mo, { mo = it }, Modifier.weight(1f), label = { Text("ماه") }, keyboardOptions = num, singleLine = true)
-                    OutlinedTextField(y, { y = it }, Modifier.weight(1.4f), label = { Text("سال") }, keyboardOptions = num, singleLine = true)
+                OutlinedButton(onClick = { showCal = true }, Modifier.fillMaxWidth()) {
+                    Text("تاریخ: " + Jalali.full(sel))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = {
@@ -70,19 +70,15 @@ fun App() {
                 }
                 if (err.isNotEmpty()) Text(err, color = MaterialTheme.colorScheme.error)
                 Button(onClick = {
-                    val yy = y.toIntOrNull(); val mm = mo.toIntOrNull(); val dd = d.toIntOrNull()
                     if (title.isBlank()) err = "عنوان را وارد کن"
-                    else if (yy == null || mm == null || dd == null || mm !in 1..12 || dd !in 1..31) err = "تاریخ معتبر نیست"
                     else {
-                        val g = Jalali.toGregorian(yy, mm, dd)
-                        val iso = String.format(Locale.US, "%04d-%02d-%02d", g[0], g[1], g[2])
-                        commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), iso, time, false))
+                        commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), sel, time, false))
                         title = ""; desc = ""; err = ""
                     }
                 }, Modifier.fillMaxWidth()) { Text("افزودن کار") }
             }
         }
-               val sections = listOf(
+        val sections = listOf(
             "امروز" to tasks.filter { it.date == today },
             "آینده" to tasks.filter { it.date > today },
             "گذشته" to tasks.filter { it.date < today }.sortedByDescending { it.date }
@@ -108,7 +104,61 @@ fun App() {
                         { commit(tasks.filter { x -> x.id != t.id }) })
                 }
             }
-        }    }
+        }
+    }
+}
+
+@Composable
+fun CalendarDialog(selected: String, today: String, onPick: (String) -> Unit, onClose: () -> Unit) {
+    val start = Jalali.fromIso(selected)
+    var jy by remember { mutableStateOf(start[0]) }
+    var jm by remember { mutableStateOf(start[1]) }
+    val offset = Jalali.weekdayIndex(Jalali.isoOfJ(jy, jm, 1))
+    val cells = List(offset) { 0 } + (1..Jalali.monthLength(jy, jm)).toList()
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = { TextButton(onClick = onClose) { Text("بستن") } },
+        title = {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { if (jm == 1) { jm = 12; jy-- } else jm-- }) { Text("قبلی") }
+                Text(Jalali.months[jm - 1] + " " + Jalali.fa(jy.toString()))
+                TextButton(onClick = { if (jm == 12) { jm = 1; jy++ } else jm++ }) { Text("بعدی") }
+            }
+        },
+        text = {
+            Column {
+                Row(Modifier.fillMaxWidth()) {
+                    listOf("ش", "ی", "د", "س", "چ", "پ", "ج").forEach {
+                        Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
+                    }
+                }
+                cells.chunked(7).forEach { week ->
+                    Row(Modifier.fillMaxWidth()) {
+                        for (i in 0 until 7) {
+                            val day = week.getOrNull(i) ?: 0
+                            val iso = if (day == 0) "" else Jalali.isoOfJ(jy, jm, day)
+                            val isSel = iso == selected
+                            val isToday = iso == today
+                            Box(
+                                Modifier.weight(1f).aspectRatio(1f).padding(2.dp)
+                                    .background(if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+                                    .clickable(enabled = day != 0) { onPick(iso) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (day != 0) Text(
+                                    Jalali.fa(day.toString()),
+                                    color = if (isSel) MaterialTheme.colorScheme.onPrimary
+                                    else if (isToday) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
 }
 
 @Composable
