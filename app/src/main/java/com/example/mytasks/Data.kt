@@ -73,10 +73,31 @@ object Jalali {
     fun todayIso() = iso(Calendar.getInstance())
     fun fromIso(s: String): IntArray { val p = s.split("-").map { it.toInt() }; return toJalali(p[0], p[1], p[2]) }
     fun text(s: String): String { val j = fromIso(s); return fa(j[2].toString()) + " " + months[j[1] - 1] + " " + fa(j[0].toString()) }
+        val weekdays = listOf("شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه")
+
+    fun isoOfJ(jy: Int, jm: Int, jd: Int): String {
+        val g = toGregorian(jy, jm, jd)
+        return String.format(Locale.US, "%04d-%02d-%02d", g[0], g[1], g[2])
+    }
+
+    fun weekdayIndex(iso: String): Int {
+        val p = iso.split("-").map { it.toInt() }
+        val c = Calendar.getInstance()
+        c.set(p[0], p[1] - 1, p[2])
+        return c[Calendar.DAY_OF_WEEK] % 7
+    }
+
+    fun monthLength(jy: Int, jm: Int): Int = when {
+        jm <= 6 -> 31
+        jm <= 11 -> 30
+        else -> { val g = toGregorian(jy, 12, 30); if (toJalali(g[0], g[1], g[2])[1] == 12) 30 else 29 }
+    }
+
+    fun full(s: String) = weekdays[weekdayIndex(s)] + " " + text(s)
 
     fun label(s: String, today: String): String {
         val c = Calendar.getInstance(); c.add(Calendar.DAY_OF_YEAR, 1)
         val p = when (s) { today -> "امروز"; iso(c) -> "فردا"; else -> "" }
-        return if (p.isEmpty()) text(s) else p + " · " + text(s)
+        return if (p.isEmpty()) full(s) else p + " · " + full(s)
     }
 }
