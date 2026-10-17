@@ -11,7 +11,8 @@ data class Task(
     val id: Long, val title: String, val desc: String, val date: String,
     val time: String, val done: Boolean, val listId: Long = 0L,
     val repeat: String = "none", val every: Int = 1, val until: String = "",
-    val doneOn: String = "", val amount: Long = 0L, val km: Long = 0L
+    val doneOn: String = "", val amount: Long = 0L, val km: Long = 0L,
+    val remind: Int = -1
 )
 
 data class Occ(val t: Task, val date: String)
@@ -49,7 +50,7 @@ object Store {
             Task(o.getLong("id"), o.getString("title"), o.getString("desc"), o.getString("date"),
                 o.getString("time"), o.getBoolean("done"), o.optLong("listId", 0L),
                 o.optString("repeat", "none"), o.optInt("every", 1), o.optString("until", ""),
-                o.optString("doneOn", ""), o.optLong("amount", 0L), o.optLong("km", 0L))
+                o.optString("doneOn", ""), o.optLong("amount", 0L), o.optLong("km", 0L), o.optInt("remind", -1))
         }.sortedWith(compareBy({ it.date }, { it.time }))
     }
 
@@ -59,10 +60,11 @@ object Store {
             a.put(JSONObject().put("id", it.id).put("title", it.title).put("desc", it.desc)
                 .put("date", it.date).put("time", it.time).put("done", it.done).put("listId", it.listId)
                 .put("repeat", it.repeat).put("every", it.every).put("until", it.until)
-                .put("doneOn", it.doneOn).put("amount", it.amount).put("km", it.km))
+                .put("doneOn", it.doneOn).put("amount", it.amount).put("km", it.km).put("remind", it.remind))
         }
         c.getSharedPreferences("tasks", 0).edit().putString("list", a.toString()).apply()
         TaskWidget.refresh(c)
+        Remind.schedule(c)
     }
 }
 

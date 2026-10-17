@@ -1,6 +1,8 @@
 package com.example.mytasks
 
 import android.app.TimePickerDialog
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,6 +34,9 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
+        }
         setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -44,6 +49,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         TaskWidget.refresh(this)
+        Remind.fire(this)
     }
 }
 
@@ -94,6 +100,7 @@ fun App() {
     var dialog by remember { mutableStateOf("") }
     var nameText by remember { mutableStateOf("") }
     var kindSel by remember { mutableStateOf("normal") }
+    var remind by remember { mutableStateOf(-1) }
     fun commit(l: List<Task>) { Store.save(ctx, l); tasks = Store.load(ctx) }
     fun commitLists(l: List<TList>) { Lists.save(ctx, l); lists = Lists.load(ctx) }
     val curList = lists.firstOrNull { it.id == cur } ?: Lists.main
@@ -250,6 +257,15 @@ fun App() {
                 } else {
                     OutlinedTextField(desc, { desc = it }, Modifier.fillMaxWidth(), label = { Text("توضیح کوتاه") }, singleLine = true)
                 }
+                if (kind == "normal" || kind == "debt") {
+                    Text("یادآوری (اعلان با صدای بوق)")
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        (if (kind == "debt") listOf(-1, 0, 1440) else listOf(-1, 0, 10, 60, 1440)).forEach { m ->
+                            if (remind == m) Button(onClick = { remind = m }) { Text(Remind.label(m, kind)) }
+                            else OutlinedButton(onClick = { remind = m }) { Text(Remind.label(m, kind)) }
+                        }
+                    }
+                }
                 if (err.isNotEmpty()) Text(err, color = MaterialTheme.colorScheme.error)
                 Button(onClick = {
                     val amt = amountText.filter { it.isDigit() }.toLongOrNull() ?: 0L
@@ -261,9 +277,9 @@ fun App() {
                         else -> {
                             val r = if (kind == "normal") rep else "none"
                             commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), sel, time, false, cur,
-                                r, if (n < 1) 1 else n, if (r == "none") "" else endDate, "", amt, km))
+                                r, if (n < 1) 1 else n, if (r == "none") "" else endDate, "", amt, km, if (kind == "car") -1 else remind))
                             title = ""; desc = ""; err = ""; sel = today
-                            amountText = ""; kmText = ""; rep = "none"; every = "1"; endDate = ""
+                            amountText = ""; kmText = ""; rep = "none"; every = "1"; endDate = ""; remind = -1
                         }
                     }
                 }, Modifier.fillMaxWidth()) { Text("افزودن") }
@@ -360,13 +376,16 @@ fun TaskRow(o: Occ, kind: String, today: String, onToggle: () -> Unit, onDelete:
         "car" -> t.title
         else -> Jalali.fa(t.time) + "   " + t.title
     }
+    val rem = if (t.remind >= 0) "یادآوری: " + Remind.label(t.remind, kind) else ""
     val line2 = when (kind) {
-        "debt" -> "سررسید: " + Jalali.full(t.date) + (if (done) " · وصول شد" else "")
-        "car" -> Jalali.full(t.date) +
-            (if (t.km > 0L) " · " + Jalali.fa(t.km.toString()) + " کیلومتر" else "") +
-            (if (t.amount > 0L) " · " + fmt(t.amount) + " تومان" else "")
-        else -> if (t.repeat != "none") "تکرار: " + Rep.label(t.repeat, t.every, t.until) else ""
-    }
+        "debt" -> listOf("سررسید: " + Jalali.full(t.date) + (if (done) " · وصول شد" else ""), rem)
+        "car" -> listOf(
+            Jalali.full(t.date) +
+                (if (t.km > 0L) " · " + Jalali.fa(t.km.toString()) + " کیلومتر" else "") +
+                (if (t.amount > 0L) " · " + fmt(t.amount) + " تومان" else "")
+        )
+        else -> listOf(if (t.repeat != "none") "تکرار: " + Rep.label(t.repeat, t.every, t.until) else "", rem)
+    }.filter { it.isNotEmpty() }.joinToString(" · ")
     Card(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (kind != "car") Checkbox(done, { onToggle() }) else Spacer(Modifier.width(8.dp))
