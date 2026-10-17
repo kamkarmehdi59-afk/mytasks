@@ -1,8 +1,12 @@
 package com.example.mytasks
 
 import android.app.TimePickerDialog
-import android.content.pm.PackageManager
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,22 +36,31 @@ import androidx.compose.ui.unit.dp
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    private var notifOn by mutableStateOf(true)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
-        }
         setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                    Surface(Modifier.fillMaxSize().systemBarsPadding()) { App() }
+                    Surface(Modifier.fillMaxSize().systemBarsPadding()) { App(notifOn) { openNotifSettings() } }
                 }
             }
         }
     }
 
+    private fun openNotifSettings() {
+        val i = if (Build.VERSION.SDK_INT >= 26) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:" + packageName))
+        }
+        startActivity(i)
+    }
+
     override fun onResume() {
         super.onResume()
+        notifOn = (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).areNotificationsEnabled()
         TaskWidget.refresh(this)
         Remind.fire(this)
     }
@@ -79,7 +92,7 @@ fun buildSections(list: List<Task>, kind: String, today: String): List<Pair<Stri
 }
 
 @Composable
-fun App() {
+fun App(notifOn: Boolean, onFixNotif: () -> Unit) {
     val ctx = LocalContext.current
     var tasks by remember { mutableStateOf(Store.load(ctx)) }
     var lists by remember { mutableStateOf(Lists.load(ctx)) }
@@ -204,6 +217,14 @@ fun App() {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("کارهای من", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(Jalali.full(today))
+                if (!notifOn) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("اعلان‌ها خاموش است و یادآوری‌ها نمی‌آیند.")
+                            Button(onClick = onFixNotif) { Text("روشن کردن اعلان‌ها") }
+                        }
+                    }
+                }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     lists.forEach { l ->
                         if (l.id == cur) Button(onClick = { cur = l.id; err = "" }) { Text(l.name) }
