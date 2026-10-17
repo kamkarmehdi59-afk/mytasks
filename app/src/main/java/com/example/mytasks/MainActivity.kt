@@ -35,6 +35,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+       override fun onResume() {
+        super.onResume()
+        TaskWidget.refresh(this)
+    } 
 }
 
 @Composable
