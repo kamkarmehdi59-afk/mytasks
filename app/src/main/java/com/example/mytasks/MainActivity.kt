@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.LayoutDirection
@@ -45,6 +47,31 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+fun buildSections(list: List<Task>, kind: String, today: String): List<Pair<String, List<Occ>>> {
+    return when (kind) {
+        "debt" -> listOf(
+            "وصول‌نشده" to list.filter { !it.done }.sortedBy { it.date }.map { Occ(it, it.date) },
+            "وصول‌شده" to list.filter { it.done }.sortedByDescending { it.date }.map { Occ(it, it.date) }
+        )
+        "car" -> listOf(
+            "سوابق" to list.sortedByDescending { it.date }.map { Occ(it, it.date) }
+        )
+        else -> {
+            val now = list.filter { Rep.occursOn(it, today) }.sortedBy { it.time }.map { Occ(it, today) }
+            val fut = list.mapNotNull { t ->
+                if (t.repeat == "none") {
+                    if (t.date > today) Occ(t, t.date) else null
+                } else {
+                    Rep.next(t, today)?.let { Occ(t, it) }
+                }
+            }.sortedWith(compareBy({ it.date }, { it.t.time }))
+            val past = list.filter { it.repeat == "none" && it.date < today }
+                .map { Occ(it, it.date) }.sortedByDescending { it.date }
+            listOf("امروز" to now, "آینده" to fut, "گذشته" to past)
+        }
+    }
+}
+
 @Composable
 fun App() {
     val ctx = LocalContext.current
@@ -55,29 +82,87 @@ fun App() {
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var sel by remember { mutableStateOf(today) }
-    var showCal by remember { mutableStateOf(false) }
     var time by remember { mutableStateOf("09:00") }
     var err by remember { mutableStateOf("") }
+    var amountText by remember { mutableStateOf("") }
+    var kmText by remember { mutableStateOf("") }
+    var rep by remember { mutableStateOf("none") }
+    var every by remember { mutableStateOf("1") }
+    var endDate by remember { mutableStateOf("") }
+    var calFor by remember { mutableStateOf("") }
+    var showRep by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf("") }
     var nameText by remember { mutableStateOf("") }
+    var kindSel by remember { mutableStateOf("normal") }
     fun commit(l: List<Task>) { Store.save(ctx, l); tasks = Store.load(ctx) }
     fun commitLists(l: List<TList>) { Lists.save(ctx, l); lists = Lists.load(ctx) }
-    val curName = lists.firstOrNull { it.id == cur }?.name ?: Lists.main.name
+    val curList = lists.firstOrNull { it.id == cur } ?: Lists.main
+    val kind = curList.kind
+    val num = KeyboardOptions(keyboardType = KeyboardType.Number)
+    val unitName = when (rep) { "day" -> "روز"; "week" -> "هفته"; "month" -> "ماه"; "year" -> "سال"; else -> "" }
+    val mine = tasks.filter { it.listId == cur }
+    val view = remember(tasks, cur, today, kind) { buildSections(tasks.filter { it.listId == cur }, kind, today) }
+    val onToggle: (Occ) -> Unit = { o -> commit(tasks.map { x -> if (x.id == o.t.id) Rep.toggle(x, o.date) else x }) }
+    val onDel: (Occ) -> Unit = { o -> commit(tasks.filter { x -> x.id != o.t.id }) }
 
-    if (showCal) CalendarDialog(today, { sel = it; showCal = false }, { showCal = false })
+    if (showRep) {
+        AlertDialog(
+            onDismissRequest = { showRep = false },
+            title = { Text("تکرار کار") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("none" to "بدون تکرار", "day" to "روز", "week" to "هفته", "month" to "ماه", "year" to "سال").forEach { (k, n) ->
+                            if (rep == k) Button(onClick = { rep = k }) { Text(n) }
+                            else OutlinedButton(onClick = { rep = k }) { Text(n) }
+                        }
+                    }
+                    if (rep != "none") {
+                        OutlinedTextField(every, { every = it.filter { c -> c.isDigit() } },
+                            label = { Text("هر چند " + unitName) }, keyboardOptions = num, singleLine = true)
+                        OutlinedButton(onClick = { calFor = "end" }) {
+                            Text(if (endDate.isEmpty()) "پایان: بدون پایان" else "پایان: " + Jalali.text(endDate))
+                        }
+                        if (endDate.isNotEmpty()) TextButton(onClick = { endDate = "" }) { Text("حذف تاریخ پایان") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showRep = false }) { Text("تأیید") } }
+        )
+    }
+
+    if (calFor != "") {
+        CalendarDialog(today, { iso ->
+            if (calFor == "date") sel = iso else endDate = iso
+            calFor = ""
+        }, { calFor = "" })
+    }
 
     if (dialog == "new" || dialog == "rename") {
         AlertDialog(
             onDismissRequest = { dialog = "" },
             title = { Text(if (dialog == "new") "لیست جدید" else "تغییر نام لیست") },
-            text = { OutlinedTextField(nameText, { nameText = it }, singleLine = true, label = { Text("عنوان") }) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(nameText, { nameText = it }, singleLine = true, label = { Text("عنوان") })
+                    if (dialog == "new") {
+                        Text("نوع لیست")
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("normal" to "عادی", "debt" to "طلب‌ها", "car" to "تعمیرات خودرو").forEach { (k, n) ->
+                                if (kindSel == k) Button(onClick = { kindSel = k }) { Text(n) }
+                                else OutlinedButton(onClick = { kindSel = k }) { Text(n) }
+                            }
+                        }
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val n = nameText.trim()
                     if (n.isNotEmpty()) {
                         if (dialog == "new") {
                             val id = System.currentTimeMillis()
-                            commitLists(lists + TList(id, n))
+                            commitLists(lists + TList(id, n, kindSel))
                             cur = id
                         } else {
                             commitLists(lists.map { if (it.id == cur) it.copy(name = n) else it })
@@ -107,8 +192,6 @@ fun App() {
         )
     }
 
-    val mine = tasks.filter { it.listId == cur }
-
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -116,63 +199,99 @@ fun App() {
                 Text(Jalali.full(today))
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     lists.forEach { l ->
-                        if (l.id == cur) Button(onClick = { cur = l.id }) { Text(l.name) }
-                        else OutlinedButton(onClick = { cur = l.id }) { Text(l.name) }
+                        if (l.id == cur) Button(onClick = { cur = l.id; err = "" }) { Text(l.name) }
+                        else OutlinedButton(onClick = { cur = l.id; err = "" }) { Text(l.name) }
                     }
-                    OutlinedButton(onClick = { nameText = ""; dialog = "new" }) { Text("+ لیست جدید") }
+                    OutlinedButton(onClick = { nameText = ""; kindSel = "normal"; dialog = "new" }) { Text("+ لیست جدید") }
                 }
                 if (cur != 0L) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { nameText = curName; dialog = "rename" }) { Text("تغییر نام لیست") }
+                        TextButton(onClick = { nameText = curList.name; dialog = "rename" }) { Text("تغییر نام لیست") }
                         TextButton(onClick = { dialog = "delete" }) { Text("حذف لیست") }
                     }
                 }
-                Text(curName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("عنوان") }, singleLine = true)
-                OutlinedButton(onClick = { showCal = true }, Modifier.fillMaxWidth()) {
-                    Text("تاریخ: " + Jalali.full(sel))
+                Text(curList.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                if (kind == "debt") {
+                    Text("جمع طلب‌های وصول‌نشده: " + fmt(mine.filter { !it.done }.sumOf { it.amount }) + " تومان",
+                        color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = {
-                        val (h, m) = time.split(":").map { it.toInt() }
-                        TimePickerDialog(ctx, { _, hh, mm -> time = String.format(Locale.US, "%02d:%02d", hh, mm) }, h, m, true).show()
-                    }) { Text("ساعت " + Jalali.fa(time)) }
-                    OutlinedTextField(desc, { desc = it }, Modifier.weight(1f), label = { Text("توضیح کوتاه") }, singleLine = true)
+                if (kind == "car") {
+                    Text("جمع هزینه‌ها: " + fmt(mine.sumOf { it.amount }) + " تومان",
+                        color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                }
+                val titleLabel = when (kind) { "debt" -> "نام شخص"; "car" -> "نام قطعه یا تعمیر"; else -> "عنوان" }
+                OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text(titleLabel) }, singleLine = true)
+                if (kind == "debt") {
+                    OutlinedTextField(amountText, { amountText = it.filter { c -> c.isDigit() } }, Modifier.fillMaxWidth(),
+                        label = { Text("مبلغ (تومان)") }, keyboardOptions = num, singleLine = true)
+                }
+                if (kind == "car") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(kmText, { kmText = it.filter { c -> c.isDigit() } }, Modifier.weight(1f),
+                            label = { Text("کیلومتر") }, keyboardOptions = num, singleLine = true)
+                        OutlinedTextField(amountText, { amountText = it.filter { c -> c.isDigit() } }, Modifier.weight(1f),
+                            label = { Text("هزینه (تومان)") }, keyboardOptions = num, singleLine = true)
+                    }
+                }
+                OutlinedButton(onClick = { calFor = "date" }, Modifier.fillMaxWidth()) {
+                    Text((if (kind == "debt") "تاریخ سررسید: " else "تاریخ: ") + Jalali.full(sel))
+                }
+                if (kind == "normal") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = {
+                            val (h, m) = time.split(":").map { it.toInt() }
+                            TimePickerDialog(ctx, { _, hh, mm -> time = String.format(Locale.US, "%02d:%02d", hh, mm) }, h, m, true).show()
+                        }) { Text("ساعت " + Jalali.fa(time)) }
+                        OutlinedTextField(desc, { desc = it }, Modifier.weight(1f), label = { Text("توضیح کوتاه") }, singleLine = true)
+                    }
+                    OutlinedButton(onClick = { showRep = true }, Modifier.fillMaxWidth()) {
+                        Text("تکرار: " + Rep.label(rep, every.toIntOrNull() ?: 1, endDate))
+                    }
+                } else {
+                    OutlinedTextField(desc, { desc = it }, Modifier.fillMaxWidth(), label = { Text("توضیح کوتاه") }, singleLine = true)
                 }
                 if (err.isNotEmpty()) Text(err, color = MaterialTheme.colorScheme.error)
                 Button(onClick = {
-                    if (title.isBlank()) err = "عنوان را وارد کن"
-                    else {
-                        commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), sel, time, false, cur))
-                        title = ""; desc = ""; err = ""; sel = today
+                    val amt = amountText.filter { it.isDigit() }.toLongOrNull() ?: 0L
+                    val km = kmText.filter { it.isDigit() }.toLongOrNull() ?: 0L
+                    val n = every.toIntOrNull() ?: 1
+                    when {
+                        title.isBlank() -> { err = if (kind == "debt") "نام شخص را وارد کن" else "عنوان را وارد کن" }
+                        kind == "debt" && amt <= 0L -> { err = "مبلغ را وارد کن" }
+                        else -> {
+                            val r = if (kind == "normal") rep else "none"
+                            commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), sel, time, false, cur,
+                                r, if (n < 1) 1 else n, if (r == "none") "" else endDate, "", amt, km))
+                            title = ""; desc = ""; err = ""; sel = today
+                            amountText = ""; kmText = ""; rep = "none"; every = "1"; endDate = ""
+                        }
                     }
-                }, Modifier.fillMaxWidth()) { Text("افزودن کار") }
+                }, Modifier.fillMaxWidth()) { Text("افزودن") }
             }
         }
-        val sections = listOf(
-            "امروز" to mine.filter { it.date == today },
-            "آینده" to mine.filter { it.date > today },
-            "گذشته" to mine.filter { it.date < today }.sortedByDescending { it.date }
-        )
-        sections.forEach { (name, all) ->
+        view.forEach { (name, occs) ->
             item(key = "sec-" + name) {
-                Text(name + " (" + Jalali.fa(all.size.toString()) + ")",
+                Text(name + " (" + Jalali.fa(occs.size.toString()) + ")",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 16.dp))
             }
-            if (all.isEmpty()) item(key = "empty-" + name) {
-                Text("کاری نیست", style = MaterialTheme.typography.bodySmall)
+            if (occs.isEmpty()) item(key = "empty-" + name) {
+                Text("چیزی نیست", style = MaterialTheme.typography.bodySmall)
             }
-            all.groupBy { it.date }.forEach { (date, list) ->
-                item(key = "d-" + name + date) {
-                    Text(Jalali.label(date, today), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+            if (kind == "normal") {
+                occs.groupBy { it.date }.forEach { (date, group) ->
+                    item(key = "d-" + name + date) {
+                        Text(Jalali.label(date, today), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+                    }
+                    items(group, key = { it.t.id.toString() + "@" + it.date }) { o ->
+                        TaskRow(o, kind, today, { onToggle(o) }, { onDel(o) })
+                    }
                 }
-                items(list, key = { it.id }) { t ->
-                    TaskRow(t,
-                        { commit(tasks.map { x -> if (x.id == t.id) x.copy(done = !x.done) else x }) },
-                        { commit(tasks.filter { x -> x.id != t.id }) })
+            } else {
+                items(occs, key = { it.t.id.toString() + "@" + it.date }) { o ->
+                    TaskRow(o, kind, today, { onToggle(o) }, { onDel(o) })
                 }
             }
         }
@@ -232,13 +351,30 @@ fun CalendarDialog(today: String, onPick: (String) -> Unit, onClose: () -> Unit)
 }
 
 @Composable
-fun TaskRow(t: Task, onToggle: () -> Unit, onDelete: () -> Unit) {
+fun TaskRow(o: Occ, kind: String, today: String, onToggle: () -> Unit, onDelete: () -> Unit) {
+    val t = o.t
+    val done = Rep.isDone(t, o.date)
+    val overdue = kind == "debt" && !done && t.date < today
+    val line1 = when (kind) {
+        "debt" -> t.title + " · " + fmt(t.amount) + " تومان"
+        "car" -> t.title
+        else -> Jalali.fa(t.time) + "   " + t.title
+    }
+    val line2 = when (kind) {
+        "debt" -> "سررسید: " + Jalali.full(t.date) + (if (done) " · وصول شد" else "")
+        "car" -> Jalali.full(t.date) +
+            (if (t.km > 0L) " · " + Jalali.fa(t.km.toString()) + " کیلومتر" else "") +
+            (if (t.amount > 0L) " · " + fmt(t.amount) + " تومان" else "")
+        else -> if (t.repeat != "none") "تکرار: " + Rep.label(t.repeat, t.every, t.until) else ""
+    }
     Card(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(t.done, { onToggle() })
+            if (kind != "car") Checkbox(done, { onToggle() }) else Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text(Jalali.fa(t.time) + "   " + t.title, fontWeight = FontWeight.SemiBold,
-                    textDecoration = if (t.done) TextDecoration.LineThrough else null)
+                Text(line1, fontWeight = FontWeight.SemiBold,
+                    textDecoration = if (done && kind != "car") TextDecoration.LineThrough else null)
+                if (line2.isNotEmpty()) Text(line2, style = MaterialTheme.typography.bodySmall,
+                    color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 if (t.desc.isNotEmpty()) Text(t.desc, style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onDelete) { Text("حذف") }

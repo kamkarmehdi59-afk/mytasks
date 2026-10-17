@@ -5,29 +5,38 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 data class Task(
     val id: Long, val title: String, val desc: String, val date: String,
-    val time: String, val done: Boolean, val listId: Long = 0L
+    val time: String, val done: Boolean, val listId: Long = 0L,
+    val repeat: String = "none", val every: Int = 1, val until: String = "",
+    val doneOn: String = "", val amount: Long = 0L, val km: Long = 0L
 )
 
-data class TList(val id: Long, val name: String)
+data class Occ(val t: Task, val date: String)
+
+data class TList(val id: Long, val name: String, val kind: String = "normal")
+
+fun fmt(n: Long) = Jalali.fa(String.format(Locale.US, "%,d", n))
 
 object Lists {
-    val main = TList(0L, "کارهای روزانه")
+    val main = TList(0L, "کارهای روزانه", "normal")
 
     fun load(c: Context): List<TList> {
         val a = JSONArray(c.getSharedPreferences("lists", 0).getString("list", "[]") ?: "[]")
         val extra = (0 until a.length()).map {
             val o = a.getJSONObject(it)
-            TList(o.getLong("id"), o.getString("name"))
+            TList(o.getLong("id"), o.getString("name"), o.optString("kind", "normal"))
         }
         return listOf(main) + extra
     }
 
     fun save(c: Context, l: List<TList>) {
         val a = JSONArray()
-        l.filter { it.id != 0L }.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name)) }
+        l.filter { it.id != 0L }.forEach {
+            a.put(JSONObject().put("id", it.id).put("name", it.name).put("kind", it.kind))
+        }
         c.getSharedPreferences("lists", 0).edit().putString("list", a.toString()).apply()
     }
 }
@@ -38,7 +47,9 @@ object Store {
         return (0 until a.length()).map {
             val o = a.getJSONObject(it)
             Task(o.getLong("id"), o.getString("title"), o.getString("desc"), o.getString("date"),
-                o.getString("time"), o.getBoolean("done"), o.optLong("listId", 0L))
+                o.getString("time"), o.getBoolean("done"), o.optLong("listId", 0L),
+                o.optString("repeat", "none"), o.optInt("every", 1), o.optString("until", ""),
+                o.optString("doneOn", ""), o.optLong("amount", 0L), o.optLong("km", 0L))
         }.sortedWith(compareBy({ it.date }, { it.time }))
     }
 
@@ -46,10 +57,82 @@ object Store {
         val a = JSONArray()
         l.forEach {
             a.put(JSONObject().put("id", it.id).put("title", it.title).put("desc", it.desc)
-                .put("date", it.date).put("time", it.time).put("done", it.done).put("listId", it.listId))
+                .put("date", it.date).put("time", it.time).put("done", it.done).put("listId", it.listId)
+                .put("repeat", it.repeat).put("every", it.every).put("until", it.until)
+                .put("doneOn", it.doneOn).put("amount", it.amount).put("km", it.km))
         }
         c.getSharedPreferences("tasks", 0).edit().putString("list", a.toString()).apply()
         TaskWidget.refresh(c)
+    }
+}
+
+object Rep {
+    fun dayNum(iso: String): Long {
+        val p = iso.split("-").map { it.toInt() }
+        val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        c.clear()
+        c.set(p[0], p[1] - 1, p[2])
+        return c.timeInMillis / 86400000L
+    }
+
+    fun addDay(iso: String): String {
+        val p = iso.split("-").map { it.toInt() }
+        val c = Calendar.getInstance()
+        c.set(p[0], p[1] - 1, p[2], 12, 0, 0)
+        c.add(Calendar.DAY_OF_YEAR, 1)
+        return Jalali.iso(c)
+    }
+
+    fun occursOn(t: Task, d: String): Boolean {
+        if (t.repeat == "none") return t.date == d
+        if (d < t.date) return false
+        if (t.until.isNotEmpty() && d > t.until) return false
+        val n = if (t.every < 1) 1 else t.every
+        return when (t.repeat) {
+            "day" -> (dayNum(d) - dayNum(t.date)) % n == 0L
+            "week" -> (dayNum(d) - dayNum(t.date)) % (7L * n) == 0L
+            "month" -> {
+                val a = Jalali.fromIso(t.date)
+                val b = Jalali.fromIso(d)
+                val diff = (b[0] * 12 + b[1]) - (a[0] * 12 + a[1])
+                diff % n == 0 && b[2] == minOf(a[2], Jalali.monthLength(b[0], b[1]))
+            }
+            "year" -> {
+                val a = Jalali.fromIso(t.date)
+                val b = Jalali.fromIso(d)
+                val diff = b[0] - a[0]
+                diff % n == 0 && b[1] == a[1] && b[2] == minOf(a[2], Jalali.monthLength(b[0], b[1]))
+            }
+            else -> false
+        }
+    }
+
+    fun next(t: Task, from: String): String? {
+        var d = from
+        for (i in 1..4000) {
+            d = addDay(d)
+            if (t.until.isNotEmpty() && d > t.until) return null
+            if (occursOn(t, d)) return d
+        }
+        return null
+    }
+
+    fun isDone(t: Task, date: String): Boolean =
+        if (t.repeat == "none") t.done else t.doneOn.split(",").contains(date)
+
+    fun toggle(t: Task, date: String): Task {
+        if (t.repeat == "none") return t.copy(done = !t.done)
+        val s = t.doneOn.split(",").filter { it.isNotEmpty() }.toMutableList()
+        if (s.contains(date)) s.remove(date) else s.add(date)
+        return t.copy(doneOn = s.joinToString(","))
+    }
+
+    fun label(rep: String, every: Int, until: String): String {
+        if (rep == "none") return "بدون تکرار"
+        val n = if (every < 1) 1 else every
+        val u = when (rep) { "day" -> "روز"; "week" -> "هفته"; "month" -> "ماه"; else -> "سال" }
+        val s = if (n == 1) "هر " + u else "هر " + Jalali.fa(n.toString()) + " " + u
+        return if (until.isEmpty()) s else s + " · تا " + Jalali.text(until)
     }
 }
 
