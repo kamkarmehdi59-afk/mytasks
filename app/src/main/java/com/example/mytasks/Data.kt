@@ -6,14 +6,39 @@ import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
 
-data class Task(val id: Long, val title: String, val desc: String, val date: String, val time: String, val done: Boolean)
+data class Task(
+    val id: Long, val title: String, val desc: String, val date: String,
+    val time: String, val done: Boolean, val listId: Long = 0L
+)
+
+data class TList(val id: Long, val name: String)
+
+object Lists {
+    val main = TList(0L, "کارهای روزانه")
+
+    fun load(c: Context): List<TList> {
+        val a = JSONArray(c.getSharedPreferences("lists", 0).getString("list", "[]") ?: "[]")
+        val extra = (0 until a.length()).map {
+            val o = a.getJSONObject(it)
+            TList(o.getLong("id"), o.getString("name"))
+        }
+        return listOf(main) + extra
+    }
+
+    fun save(c: Context, l: List<TList>) {
+        val a = JSONArray()
+        l.filter { it.id != 0L }.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name)) }
+        c.getSharedPreferences("lists", 0).edit().putString("list", a.toString()).apply()
+    }
+}
 
 object Store {
     fun load(c: Context): List<Task> {
         val a = JSONArray(c.getSharedPreferences("tasks", 0).getString("list", "[]") ?: "[]")
         return (0 until a.length()).map {
             val o = a.getJSONObject(it)
-            Task(o.getLong("id"), o.getString("title"), o.getString("desc"), o.getString("date"), o.getString("time"), o.getBoolean("done"))
+            Task(o.getLong("id"), o.getString("title"), o.getString("desc"), o.getString("date"),
+                o.getString("time"), o.getBoolean("done"), o.optLong("listId", 0L))
         }.sortedWith(compareBy({ it.date }, { it.time }))
     }
 
@@ -21,7 +46,7 @@ object Store {
         val a = JSONArray()
         l.forEach {
             a.put(JSONObject().put("id", it.id).put("title", it.title).put("desc", it.desc)
-                .put("date", it.date).put("time", it.time).put("done", it.done))
+                .put("date", it.date).put("time", it.time).put("done", it.done).put("listId", it.listId))
         }
         c.getSharedPreferences("tasks", 0).edit().putString("list", a.toString()).apply()
         TaskWidget.refresh(c)
@@ -30,6 +55,7 @@ object Store {
 
 object Jalali {
     val months = listOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+    val weekdays = listOf("شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه")
 
     fun fa(s: String) = s.map { if (it in '0'..'9') '۰' + (it - '0') else it }.joinToString("")
 
@@ -73,7 +99,6 @@ object Jalali {
     fun todayIso() = iso(Calendar.getInstance())
     fun fromIso(s: String): IntArray { val p = s.split("-").map { it.toInt() }; return toJalali(p[0], p[1], p[2]) }
     fun text(s: String): String { val j = fromIso(s); return fa(j[2].toString()) + " " + months[j[1] - 1] + " " + fa(j[0].toString()) }
-        val weekdays = listOf("شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه")
 
     fun isoOfJ(jy: Int, jm: Int, jd: Int): String {
         val g = toGregorian(jy, jm, jd)
@@ -90,7 +115,10 @@ object Jalali {
     fun monthLength(jy: Int, jm: Int): Int = when {
         jm <= 6 -> 31
         jm <= 11 -> 30
-        else -> { val g = toGregorian(jy, 12, 30); if (toJalali(g[0], g[1], g[2])[1] == 12) 30 else 29 }
+        else -> {
+            val g = toGregorian(jy, 12, 30)
+            if (toJalali(g[0], g[1], g[2])[1] == 12) 30 else 29
+        }
     }
 
     fun full(s: String) = weekdays[weekdayIndex(s)] + " " + text(s)

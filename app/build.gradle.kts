@@ -11,8 +11,21 @@ android {
         applicationId = "com.example.mytasks"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
+    }
+    signingConfigs {
+        create("shared") {
+            storeFile = file("mytasks.keystore")
+            storeType = "pkcs12"
+            storePassword = "mytasks123"
+            keyAlias = "mytasks"
+            keyPassword = "mytasks123"
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("shared") }
+        getByName("release") { signingConfig = signingConfigs.getByName("shared") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

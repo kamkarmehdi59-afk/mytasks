@@ -5,10 +5,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,16 +38,19 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-       override fun onResume() {
+
+    override fun onResume() {
         super.onResume()
         TaskWidget.refresh(this)
-    } 
+    }
 }
 
 @Composable
 fun App() {
     val ctx = LocalContext.current
     var tasks by remember { mutableStateOf(Store.load(ctx)) }
+    var lists by remember { mutableStateOf(Lists.load(ctx)) }
+    var cur by remember { mutableStateOf(0L) }
     val today = Jalali.todayIso()
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
@@ -52,15 +58,76 @@ fun App() {
     var showCal by remember { mutableStateOf(false) }
     var time by remember { mutableStateOf("09:00") }
     var err by remember { mutableStateOf("") }
+    var dialog by remember { mutableStateOf("") }
+    var nameText by remember { mutableStateOf("") }
     fun commit(l: List<Task>) { Store.save(ctx, l); tasks = Store.load(ctx) }
+    fun commitLists(l: List<TList>) { Lists.save(ctx, l); lists = Lists.load(ctx) }
+    val curName = lists.firstOrNull { it.id == cur }?.name ?: Lists.main.name
 
-    if (showCal) CalendarDialog(sel, today, { sel = it; showCal = false }, { showCal = false })
+    if (showCal) CalendarDialog(today, { sel = it; showCal = false }, { showCal = false })
+
+    if (dialog == "new" || dialog == "rename") {
+        AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text(if (dialog == "new") "لیست جدید" else "تغییر نام لیست") },
+            text = { OutlinedTextField(nameText, { nameText = it }, singleLine = true, label = { Text("عنوان") }) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val n = nameText.trim()
+                    if (n.isNotEmpty()) {
+                        if (dialog == "new") {
+                            val id = System.currentTimeMillis()
+                            commitLists(lists + TList(id, n))
+                            cur = id
+                        } else {
+                            commitLists(lists.map { if (it.id == cur) it.copy(name = n) else it })
+                        }
+                        dialog = ""
+                    }
+                }) { Text("تأیید") }
+            },
+            dismissButton = { TextButton(onClick = { dialog = "" }) { Text("انصراف") } }
+        )
+    }
+
+    if (dialog == "delete") {
+        AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("حذف لیست") },
+            text = { Text("این لیست و همه کارهای آن حذف می‌شود. مطمئنی؟") },
+            confirmButton = {
+                TextButton(onClick = {
+                    commit(tasks.filter { it.listId != cur })
+                    commitLists(lists.filter { it.id != cur })
+                    cur = 0L
+                    dialog = ""
+                }) { Text("حذف") }
+            },
+            dismissButton = { TextButton(onClick = { dialog = "" }) { Text("انصراف") } }
+        )
+    }
+
+    val mine = tasks.filter { it.listId == cur }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("کارهای من", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(Jalali.full(today))
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    lists.forEach { l ->
+                        if (l.id == cur) Button(onClick = { cur = l.id }) { Text(l.name) }
+                        else OutlinedButton(onClick = { cur = l.id }) { Text(l.name) }
+                    }
+                    OutlinedButton(onClick = { nameText = ""; dialog = "new" }) { Text("+ لیست جدید") }
+                }
+                if (cur != 0L) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { nameText = curName; dialog = "rename" }) { Text("تغییر نام لیست") }
+                        TextButton(onClick = { dialog = "delete" }) { Text("حذف لیست") }
+                    }
+                }
+                Text(curName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("عنوان") }, singleLine = true)
                 OutlinedButton(onClick = { showCal = true }, Modifier.fillMaxWidth()) {
                     Text("تاریخ: " + Jalali.full(sel))
@@ -76,16 +143,16 @@ fun App() {
                 Button(onClick = {
                     if (title.isBlank()) err = "عنوان را وارد کن"
                     else {
-                        commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), sel, time, false))
-                        title = ""; desc = ""; err = ""
+                        commit(tasks + Task(System.currentTimeMillis(), title.trim(), desc.trim(), sel, time, false, cur))
+                        title = ""; desc = ""; err = ""; sel = today
                     }
                 }, Modifier.fillMaxWidth()) { Text("افزودن کار") }
             }
         }
         val sections = listOf(
-            "امروز" to tasks.filter { it.date == today },
-            "آینده" to tasks.filter { it.date > today },
-            "گذشته" to tasks.filter { it.date < today }.sortedByDescending { it.date }
+            "امروز" to mine.filter { it.date == today },
+            "آینده" to mine.filter { it.date > today },
+            "گذشته" to mine.filter { it.date < today }.sortedByDescending { it.date }
         )
         sections.forEach { (name, all) ->
             item(key = "sec-" + name) {
@@ -113,8 +180,8 @@ fun App() {
 }
 
 @Composable
-fun CalendarDialog(selected: String, today: String, onPick: (String) -> Unit, onClose: () -> Unit) {
-    val start = Jalali.fromIso(selected)
+fun CalendarDialog(today: String, onPick: (String) -> Unit, onClose: () -> Unit) {
+    val start = Jalali.fromIso(today)
     var jy by remember { mutableStateOf(start[0]) }
     var jm by remember { mutableStateOf(start[1]) }
     val offset = Jalali.weekdayIndex(Jalali.isoOfJ(jy, jm, 1))
@@ -122,6 +189,7 @@ fun CalendarDialog(selected: String, today: String, onPick: (String) -> Unit, on
     AlertDialog(
         onDismissRequest = onClose,
         confirmButton = { TextButton(onClick = onClose) { Text("بستن") } },
+        dismissButton = { TextButton(onClick = { onPick(today) }) { Text("امروز") } },
         title = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { if (jm == 1) { jm = 12; jy-- } else jm-- }) { Text("قبلی") }
@@ -141,19 +209,17 @@ fun CalendarDialog(selected: String, today: String, onPick: (String) -> Unit, on
                         for (i in 0 until 7) {
                             val day = week.getOrNull(i) ?: 0
                             val iso = if (day == 0) "" else Jalali.isoOfJ(jy, jm, day)
-                            val isSel = iso == selected
                             val isToday = iso == today
                             Box(
                                 Modifier.weight(1f).aspectRatio(1f).padding(2.dp)
-                                    .background(if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+                                    .then(if (isToday) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape) else Modifier)
+                                    .background(if (isToday) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, CircleShape)
                                     .clickable(enabled = day != 0) { onPick(iso) },
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (day != 0) Text(
                                     Jalali.fa(day.toString()),
-                                    color = if (isSel) MaterialTheme.colorScheme.onPrimary
-                                    else if (isToday) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurface,
+                                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
                                 )
                             }
